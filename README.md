@@ -18,6 +18,18 @@
 
 Local PDF LLM Extractor is a cross-platform Python CLI that extracts information from PDF documents on your own machine.
 
+## Why This Project
+
+Many useful research questions are semantic rather than keyword-based. For example:
+
+- What statistical tool does this research use?
+- Does this paper rely on a natural experiment?
+- What identification strategy does the author claim?
+
+You can ask those questions directly to an AI model, but uploading an entire PDF into an agent context is expensive and token-intensive, especially for long papers and batch workflows.
+
+This project exists to make that workflow practical: parse the PDF locally, reduce it into a structured text pipeline, and let a local LLM answer semantic questions without paying the repeated token cost of sending the raw document to a remote agent each time.
+
 It combines three stages:
 
 1. PDF parsing into Markdown or normalized plain text.
