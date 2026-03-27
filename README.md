@@ -412,4 +412,6 @@ Ignored from version control:
 
 This repository contains the orchestration code for a local PDF extraction workflow.
 
+This project is released under the MIT License. See the `LICENSE` file for the full text.
+
 It depends on third-party open-source projects for PDF parsing, model runtime support, and local LLM serving. Please review and comply with the licenses and attribution requirements of those upstream dependencies when redistributing or deploying this project.
