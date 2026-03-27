@@ -1,5 +1,21 @@
 # Local PDF LLM Extractor
 
+```text
+  .--------------------------------------------------------------------------------.
+  |  local-pdf-llm-extractor                                                       |
+  |--------------------------------------------------------------------------------|
+  |  [PDF] => [fast-first | mineru | pymupdf] => [chunk pipeline] => [ollama]     |
+  |                                                                                |
+  |  input.pdf                                                                     |
+  |    |                                                                           |
+  |    +--> text layer? ---- yes ---> normalize ---> split ---> local model ----+  |
+  |    |                                    |                                     |  |
+  |    +--> no -----------> markdown rebuild+-----> aggregate ---> output.md <---+  |
+  |                                                                                |
+  |  mode: local-only    gpu: optional    batch: supported    output: markdown     |
+  '--------------------------------------------------------------------------------'
+```
+
 Local PDF LLM Extractor is a cross-platform Python CLI that extracts information from PDF documents on your own machine.
 
 It combines three stages:
