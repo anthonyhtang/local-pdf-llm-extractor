@@ -1,0 +1,3 @@
+Extract the most important factual information from this Markdown document.
+Return concise Markdown with clear headings, bullet lists, and any critical tables preserved.
+Include named entities, dates, figures, findings, decisions, and action items when present.

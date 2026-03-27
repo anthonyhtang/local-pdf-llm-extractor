@@ -1,0 +1,9 @@
+# This file is provided for users and automation that expect pip-style inputs.
+# The project is developed and tested with uv and pyproject.toml.
+mineru[all]
+pymupdf4llm
+torch
+torchvision
+typer
+httpx
+rich
