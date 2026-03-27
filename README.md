@@ -1,19 +1,38 @@
 # Local PDF LLM Extractor
 
+Chinese version: [README.zh-CN.md](README.zh-CN.md)
+
 ```text
-  .--------------------------------------------------------------------------------.
-  |  local-pdf-llm-extractor                                                       |
-  |--------------------------------------------------------------------------------|
-  |  [PDF] => [fast-first | mineru | pymupdf] => [chunk pipeline] => [ollama]     |
-  |                                                                                |
-  |  input.pdf                                                                     |
-  |    |                                                                           |
-  |    +--> text layer? ---- yes ---> normalize ---> split ---> local model ----+  |
-  |    |                                    |                                     |  |
-  |    +--> no -----------> markdown rebuild+-----> aggregate ---> output.md <---+  |
-  |                                                                                |
-  |  mode: local-only    gpu: optional    batch: supported    output: markdown     |
-  '--------------------------------------------------------------------------------'
+    _                    _   ____  ____  _____   _      _      __  __
+   | |    ___   ___ __ _| | |  _ \|  _ \|  ___| | |    | |    |  \/  |
+   | |   / _ \ / __/ _` | | | |_) | | | | |_    | |    | |    | |\/| |
+   | |__| (_) | (_| (_| | | |  __/| |_| |  _|   | |___ | |___ | |  | |
+   |_____\___/ \___\__,_|_| |_|   |____/|_|     |_____||_____||_|  |_|
+
+    _____         _                  _
+   | ____|__  __ | |_ _ __ __ _  ___| |_ ___  _ __
+   |  _|  \ \/ / | __| '__/ _` |/ __| __/ _ \| '__|
+   | |___  >  <  | |_| | | (_| | (__| || (_) | |
+   |_____/_/\_\  \__|_|  \__,_|\___|\__\___/|_|
+
+                .-"""-.
+               / .===. \
+               \/ 6 6 \/
+               ( \___/ )
+___ooo__________\_____/_______________________________
+/                                                     /
+|  > ask_semantic_question("what statistical tool?") |
+|  > parse locally                                    |
+|  > chunk smartly                                    |
+|  > query ollama                                     |
+|  > write answer.md                                  |
+\____________________________ooo______________________\
+               |  |  |
+               |_ | _|
+               |  |  |
+               |__|__|
+               /-'Y'-\\
+              (__/ \__)
 ```
 
 Local PDF LLM Extractor is a cross-platform Python CLI that extracts information from PDF documents on your own machine.
