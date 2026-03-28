@@ -3,17 +3,9 @@
 English version: [README.md](README.md)
 
 ```text
-    _                    _   ____  ____  _____   _      _      __  __
-   | |    ___   ___ __ _| | |  _ \|  _ \|  ___| | |    | |    |  \/  |
-   | |   / _ \ / __/ _` | | | |_) | | | | |_    | |    | |    | |\/| |
-   | |__| (_) | (_| (_| | | |  __/| |_| |  _|   | |___ | |___ | |  | |
-   |_____\___/ \___\__,_|_| |_|   |____/|_|     |_____||_____||_|  |_|
-
-    _____         _                  _
-   | ____|__  __ | |_ _ __ __ _  ___| |_ ___  _ __
-   |  _|  \ \/ / | __| '__/ _` |/ __| __/ _ \| '__|
-   | |___  >  <  | |_| | | (_| | (__| || (_) | |
-   |_____/_/\_\  \__|_|  \__,_|\___|\__\___/|_|
+ /\_/\\   Local PDF LLM Extractor
+( o.o )  本地解析 PDF，本地语义提取
+ > ^ <   chunk, ask, merge
 ```
 
 Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在本地从 PDF 中抽取信息，并结合本地大语言模型进行语义问答与信息提取。
@@ -158,11 +150,17 @@ Windows PowerShell 下常见激活方式：
 
 ```bash
 ollama serve
+ollama pull qwen3.5:2b
 ollama pull qwen3.5:9b
 ollama pull gemma3:4b
 ```
 
 CLI 默认的最终聚合模型是 `qwen3.5:9b`。
+
+推荐的本地模型组合：
+
+- `qwen3.5:2b`：更保守、运行成本更低。适合你更在意少编造、哪怕会漏掉一部分边缘信息的场景。
+- `gemma3:4b`：更激进，通常更容易给出候选答案。适合你更在意召回率，并愿意人工筛掉部分噪声的场景。
 
 ## 快速开始
 
@@ -181,6 +179,35 @@ uv run pdf-extract \
   --input path/to/file.pdf \
   --prompt "请用中文总结这篇文献的关键发现" \
   --model qwen3.5:9b
+```
+
+官方结构化 prompt 模板：
+
+```text
+Task: <你想从文档中抽取什么>
+
+Requirements:
+- <格式或长度要求>
+- <需要包含什么>
+- <需要排除什么>
+
+If the document does not clearly contain the requested information, write exactly: <fallback text>
+```
+
+程序会把最后这一行识别为“整篇文档级别”的 fallback 规则。
+在 chunk 阶段，如果局部证据不足，程序会内部使用 `NOT_RELEVANT`，而不会让单个 chunk 直接输出最终 fallback 文本，这样聚合时更稳定。
+
+例子：识别外生冲击
+
+```text
+Identify the main exogenous shock or natural experiment used in this document, if there is one.
+
+Requirements:
+- Answer in no more than 120 words.
+- Describe only the event itself: what happened, when and where it occurred, and why it is treated as plausibly exogenous.
+- Do not describe the paper, research design, identification strategy, treatment or control groups, methods, data, sample period, results, mechanisms, moderators, or robustness checks.
+
+If the document does not clearly contain the requested information, write exactly: No clear exogenous shock identified.
 ```
 
 ### 3. 批量处理一个目录中的 PDF

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from time import perf_counter
 from typing import Annotated, Literal
@@ -20,7 +19,6 @@ from pdf_extractor.utils import (
     read_text_file,
     resolve_chunk_size,
     split_markdown_into_chunks,
-    truncate_text,
     write_text_file,
 )
 
@@ -328,14 +326,7 @@ def _process_pdfs(
                             chunk_details,
                         ]
                     ).strip()
-            output_content = _build_extraction_document(
-                pdf_path=pdf_path,
-                model=model,
-                chunk_model=chunk_model,
-                engine=resolved_engine,
-                prompt=resolved_prompt,
-                body=output_body,
-            )
+            output_content = _build_extraction_document(output_body)
             output_path = build_output_path(pdf_path, output_dir)
             write_started = perf_counter()
             _write_output(output_path, output_content)
@@ -374,25 +365,8 @@ def _write_output(output_path: Path, content: str) -> None:
     write_text_file(output_path, content.rstrip() + "\n")
 
 
-def _build_extraction_document(pdf_path: Path, model: str, chunk_model: str, engine: str, prompt: str, body: str) -> str:
-    model_lines = [f"**Model:** {model}"]
-    if chunk_model != model:
-        model_lines.append(f"**Chunk Model:** {chunk_model}")
-
-    return "\n".join(
-        [
-            f"# Extraction: {pdf_path.name}",
-            "",
-            *model_lines,
-            f"**Engine:** {engine}",
-            f"**Prompt:** {truncate_text(prompt, 100)}",
-            f"**Date:** {date.today().isoformat()}",
-            "",
-            "---",
-            "",
-            body.strip(),
-        ]
-    ).strip()
+def _build_extraction_document(body: str) -> str:
+    return body.strip()
 
 
 def _print_file_timing(metrics: FileProcessingMetrics) -> None:

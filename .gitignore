@@ -1,4 +1,5 @@
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -7,6 +8,11 @@ __pycache__/
 
 .tmp_*/
 *.log
+
+Leadership_0203_v2.pdf
+shock_test_output*/
+test_current_structured_*/
+test_official_template_*/
 
 fulltext/
 output/

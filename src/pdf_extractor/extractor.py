@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from dataclasses import field
+import re
 
 import httpx
 
@@ -75,29 +76,24 @@ class OllamaClient:
         return result.strip()
 
     def extract_from_chunk(self, content: str, prompt: str, model: str | None = None) -> str:
-        chunk_prompt = "\n".join(
-            [
-                "You are reviewing one chunk from a larger document.",
-                "Answer only with information supported by this chunk.",
-                f"If the chunk does not contain material relevant to the user instruction, reply exactly {NOT_RELEVANT_SENTINEL}.",
-                "Otherwise return one concise Markdown paragraph of at most 60 words containing only the relevant evidence.",
-                "Do not repeat the user instruction. Do not add caveats unless the chunk itself requires them.",
-                "",
-                "User instruction:",
-                prompt,
-            ]
-        )
+        chunk_prompt = _build_chunk_prompt(prompt)
         return self.call_ollama(content, chunk_prompt, model=model)
 
     def aggregate_chunk_results(self, chunk_results: list[str], prompt: str, model: str | None = None) -> str:
+        document_fallback = _extract_document_fallback(prompt)
+        normalized_fallback = _normalize_for_matching(document_fallback) if document_fallback else None
         relevant_results = [
             result.strip()
             for result in chunk_results
-            if result.strip() and result.strip() != NOT_RELEVANT_SENTINEL
+            if result.strip()
+            and _normalize_for_matching(result) != _normalize_for_matching(NOT_RELEVANT_SENTINEL)
+            and (normalized_fallback is None or _normalize_for_matching(result) != normalized_fallback)
         ]
         relevant_results = _deduplicate_candidates(relevant_results)
 
         if not relevant_results:
+            if document_fallback:
+                return document_fallback
             return "No relevant evidence found in the document."
 
         if len(relevant_results) == 1:
@@ -110,20 +106,7 @@ class OllamaClient:
             for index, result in enumerate(relevant_results, start=1)
         )
 
-        aggregate_prompt = "\n".join(
-            [
-                "You are combining candidate answers extracted from different chunks of the same document.",
-                "Produce one final answer for the whole document.",
-                "Deduplicate repeated content and remove chunk-specific redundancy.",
-                "Resolve conflicts conservatively by keeping only the claims supported consistently across candidates.",
-                "Preserve the user's requested language, format, and length limits.",
-                "Return exactly one compact paragraph unless the user explicitly asked for a list.",
-                "Return Markdown only.",
-                "",
-                "User instruction:",
-                prompt,
-            ]
-        )
+        aggregate_prompt = _build_aggregate_prompt(prompt, document_fallback)
         return self.call_ollama(combined_candidates, aggregate_prompt, model=model)
 
     def extract_chunks_parallel(
@@ -164,18 +147,7 @@ class OllamaClient:
         prompt: str,
         model: str | None,
     ) -> str:
-        chunk_prompt = "\n".join(
-            [
-                "You are reviewing one chunk from a larger document.",
-                "Answer only with information supported by this chunk.",
-                f"If the chunk does not contain material relevant to the user instruction, reply exactly {NOT_RELEVANT_SENTINEL}.",
-                "Otherwise return one concise Markdown paragraph of at most 60 words containing only the relevant evidence.",
-                "Do not repeat the user instruction. Do not add caveats unless the chunk itself requires them.",
-                "",
-                "User instruction:",
-                prompt,
-            ]
-        )
+        chunk_prompt = _build_chunk_prompt(prompt)
         payload = {
             "model": model or self.model,
             "prompt": f"{chunk_prompt}\n\n---\n\n{chunk}",
@@ -221,3 +193,53 @@ def _deduplicate_candidates(chunk_results: list[str]) -> list[str]:
         deduplicated.append(result)
 
     return deduplicated
+
+
+def _build_chunk_prompt(prompt: str) -> str:
+    document_fallback = _extract_document_fallback(prompt)
+    instructions = [
+        "You are reviewing one chunk from a larger document.",
+        "Answer only with information supported by this chunk.",
+        f"If the chunk does not contain material relevant to the user instruction, reply exactly {NOT_RELEVANT_SENTINEL}.",
+        "Otherwise return one concise Markdown paragraph of at most 60 words containing only the relevant evidence.",
+        "This is a chunk-level task, not a whole-document task.",
+        "Do not repeat the user instruction. Do not add caveats unless the chunk itself requires them.",
+    ]
+    if document_fallback:
+        instructions.append(f"Never reply with the whole-document fallback string at chunk level: {document_fallback}")
+        instructions.append(f"If the chunk lacks enough evidence, reply exactly {NOT_RELEVANT_SENTINEL} instead.")
+    instructions.extend(["", "User instruction:", prompt])
+    return "\n".join(instructions)
+
+
+def _build_aggregate_prompt(prompt: str, document_fallback: str | None) -> str:
+    instructions = [
+        "You are combining candidate answers extracted from different chunks of the same document.",
+        "Produce one final answer for the whole document.",
+        "Deduplicate repeated content and remove chunk-specific redundancy.",
+        "Resolve conflicts conservatively by keeping only the claims supported consistently across candidates.",
+        "Preserve the user's requested language, format, and length limits.",
+        "Return exactly one compact paragraph unless the user explicitly asked for a list.",
+        "Return Markdown only.",
+    ]
+    if document_fallback:
+        instructions.append(f"If the document still does not clearly support an answer, reply exactly: {document_fallback}")
+    instructions.extend(["", "User instruction:", prompt])
+    return "\n".join(instructions)
+
+
+def _extract_document_fallback(prompt: str) -> str | None:
+    for line in prompt.splitlines():
+        match = re.search(r"(?:write|return)\s+exactly:\s*(.+)$", line.strip(), flags=re.IGNORECASE)
+        if not match:
+            continue
+        candidate = match.group(1).strip()
+        if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in {'"', "'", '`'}:
+            candidate = candidate[1:-1].strip()
+        if candidate:
+            return candidate
+    return None
+
+
+def _normalize_for_matching(text: str) -> str:
+    return " ".join(text.strip().lower().split())

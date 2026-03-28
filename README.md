@@ -3,36 +3,9 @@
 Chinese version: [README.zh-CN.md](README.zh-CN.md)
 
 ```text
-    _                    _   ____  ____  _____   _      _      __  __
-   | |    ___   ___ __ _| | |  _ \|  _ \|  ___| | |    | |    |  \/  |
-   | |   / _ \ / __/ _` | | | |_) | | | | |_    | |    | |    | |\/| |
-   | |__| (_) | (_| (_| | | |  __/| |_| |  _|   | |___ | |___ | |  | |
-   |_____\___/ \___\__,_|_| |_|   |____/|_|     |_____||_____||_|  |_|
-
-    _____         _                  _
-   | ____|__  __ | |_ _ __ __ _  ___| |_ ___  _ __
-   |  _|  \ \/ / | __| '__/ _` |/ __| __/ _ \| '__|
-   | |___  >  <  | |_| | | (_| | (__| || (_) | |
-   |_____/_/\_\  \__|_|  \__,_|\___|\__\___/|_|
-
-                .-"""-.
-               / .===. \
-               \/ 6 6 \/
-               ( \___/ )
-___ooo__________\_____/_______________________________
-/                                                     /
-|  > ask_semantic_question("what statistical tool?") |
-|  > parse locally                                    |
-|  > chunk smartly                                    |
-|  > query ollama                                     |
-|  > write answer.md                                  |
-\____________________________ooo______________________\
-               |  |  |
-               |_ | _|
-               |  |  |
-               |__|__|
-               /-'Y'-\\
-              (__/ \__)
+ /\_/\\   Local PDF LLM Extractor
+( o.o )   Parse locally, ask semantically
+ > ^ <    Chunk, ask, merge
 ```
 
 Local PDF LLM Extractor is a cross-platform Python CLI that extracts information from PDF documents on your own machine.
@@ -186,11 +159,17 @@ Example:
 
 ```bash
 ollama serve
+ollama pull qwen3.5:2b
 ollama pull qwen3.5:9b
 ollama pull gemma3:4b
 ```
 
 The default aggregation model in the CLI is `qwen3.5:9b`.
+
+Recommended local models for this workflow:
+
+- `qwen3.5:2b`: more conservative and cheaper to run. Better when you prefer fewer fabricated details, even if it may miss weak evidence.
+- `gemma3:4b`: more aggressive and often better at surfacing candidate answers. Better when you prefer recall and are willing to manually screen noisier outputs.
 
 ## Quick Start
 
@@ -209,6 +188,35 @@ uv run pdf-extract \
   --input path/to/file.pdf \
   --prompt "Summarize the key findings in English" \
   --model qwen3.5:9b
+```
+
+Official structured prompt template:
+
+```text
+Task: <what to extract from the document>
+
+Requirements:
+- <format or length requirement>
+- <what to include>
+- <what to exclude>
+
+If the document does not clearly contain the requested information, write exactly: <fallback text>
+```
+
+The extractor recognizes the final line above as a whole-document fallback rule.
+At chunk level it will use `NOT_RELEVANT` internally instead of letting a partial chunk emit the final fallback text, which helps aggregation stay consistent.
+
+Example: exogenous shock extraction
+
+```text
+Identify the main exogenous shock or natural experiment used in this document, if there is one.
+
+Requirements:
+- Answer in no more than 120 words.
+- Describe only the event itself: what happened, when and where it occurred, and why it is treated as plausibly exogenous.
+- Do not describe the paper, research design, identification strategy, treatment or control groups, methods, data, sample period, results, mechanisms, moderators, or robustness checks.
+
+If the document does not clearly contain the requested information, write exactly: No clear exogenous shock identified.
 ```
 
 ### 3. Process a folder of PDFs
