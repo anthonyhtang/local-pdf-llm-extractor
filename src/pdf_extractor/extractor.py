@@ -79,7 +79,7 @@ class OllamaClient:
         chunk_prompt = _build_chunk_prompt(prompt)
         return self.call_ollama(content, chunk_prompt, model=model)
 
-    def merge_chunk_evidence(self, chunk_results: list[str], prompt: str) -> str:
+    def merge_chunk_evidence(self, chunk_results: list[str], prompt: str, model: str | None = None) -> str:
         document_fallback = _extract_document_fallback(prompt)
         normalized_fallback = _normalize_for_matching(document_fallback) if document_fallback else None
         relevant_results = [
@@ -95,10 +95,15 @@ class OllamaClient:
             if document_fallback:
                 return document_fallback
             return "No relevant evidence found in the document."
-        lines = ["## Retrieved Evidence"]
-        for index, result in enumerate(relevant_results, start=1):
-            lines.append(f"\n### Evidence {index}\n{result}")
-        return "\n".join(lines).strip()
+
+        limited_results = relevant_results[:10]
+        combined_candidates = "\n\n".join(
+            f"Candidate {index}:\n{result}"
+            for index, result in enumerate(limited_results, start=1)
+        )
+
+        consolidation_prompt = _build_consolidation_prompt(prompt, document_fallback)
+        return self.call_ollama(combined_candidates, consolidation_prompt, model=model)
 
     def extract_chunks_parallel(
         self,
@@ -201,6 +206,27 @@ def _build_chunk_prompt(prompt: str) -> str:
     if document_fallback:
         instructions.append(f"Never reply with the whole-document fallback string at chunk level: {document_fallback}")
         instructions.append(f"If the chunk lacks enough evidence, reply exactly {NOT_RELEVANT_SENTINEL} instead.")
+    instructions.extend(["", "User instruction:", prompt])
+    return "\n".join(instructions)
+
+
+def _build_consolidation_prompt(prompt: str, document_fallback: str | None) -> str:
+    instructions = [
+        "You are consolidating chunk-level extraction candidates for one document.",
+        "Produce a concise intermediate retrieval result for downstream LLM processing.",
+        "Use only information supported by the candidate evidence.",
+        "Decision rule for existence-style tasks:",
+        "- If at least one candidate clearly contains the target and multiple candidates point to the same event/object, decide EXISTS.",
+        "- If no candidate clearly contains the target, decide NOT EXISTS.",
+        "- If candidates conflict heavily and do not converge to the same target, decide UNCLEAR.",
+        "State the decision in the first sentence using exactly one of: EXISTS, NOT EXISTS, or UNCLEAR.",
+        "Then provide a short description of the identified target (if EXISTS), in plain prose.",
+        "Return one compact paragraph only (no headings, no bullet points, no numbering).",
+        "Keep the response short and practical, typically 80-200 words unless the user asked for less.",
+        "Do not output labels such as Retrieved Evidence, Evidence 1, Candidate 1, or similar.",
+    ]
+    if document_fallback:
+        instructions.append(f"If the document does not clearly support an answer, reply exactly: {document_fallback}")
     instructions.extend(["", "User instruction:", prompt])
     return "\n".join(instructions)
 

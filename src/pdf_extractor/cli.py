@@ -22,7 +22,11 @@ from pdf_extractor.utils import (
     write_text_file,
 )
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, help="Convert PDFs to Markdown and extract information with Ollama.")
+app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Run local PDF retrieval/extraction and produce concise consolidation output for downstream LLM processing.",
+)
 console = Console()
 
 
@@ -45,18 +49,18 @@ class FileProcessingMetrics:
 @app.command()
 def main(
     input: Annotated[Path, typer.Option("--input", exists=True, file_okay=True, dir_okay=True, readable=True, path_type=Path, help="PDF file or directory containing PDFs.")],
-    prompt: Annotated[str | None, typer.Option("--prompt", help="Extraction instruction text.")] = None,
+    prompt: Annotated[str | None, typer.Option("--prompt", help="Retrieval/extraction instruction text.")] = None,
     prompt_file: Annotated[Path | None, typer.Option("--prompt-file", exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path, help="Path to a text file containing the extraction prompt.")] = None,
     output_dir: Annotated[Path | None, typer.Option("--output-dir", file_okay=False, dir_okay=True, writable=True, path_type=Path, help="Directory to write outputs to. Defaults to each PDF directory.")] = None,
     engine: Annotated[Literal["mineru", "pymupdf", "fast", "fast-first"], typer.Option("--engine", case_sensitive=False, help="Extraction engine to use.")] = "mineru",
     fast_fallback: Annotated[bool, typer.Option("--fast-fallback", help="When --engine fast fails, fall back to the slower Markdown conversion pipeline. This is implied by --engine fast-first.")] = False,
     ollama_url: Annotated[str, typer.Option("--ollama-url", help="Base URL for the Ollama API.")] = "http://localhost:11434",
-    model: Annotated[str, typer.Option("--model", help="Ollama model name used for chunk-level extraction.")] = "qwen3.5:9b",
+    model: Annotated[str, typer.Option("--model", help="Ollama model for chunk extraction and document-level consolidation.")] = "qwen3.5:9b",
     chunk_model: Annotated[str | None, typer.Option("--chunk-model", help="Optional model override for chunk-level extraction. Defaults to --model.")] = None,
     chunk_size: Annotated[int | None, typer.Option("--chunk-size", min=500, help="Maximum characters per chunk sent to Ollama. Leave unset to use adaptive defaults.")] = None,
     parallelism: Annotated[int, typer.Option("--parallelism", min=1, help="Maximum number of concurrent Ollama chunk requests.")] = 3,
     batch_convert: Annotated[bool, typer.Option("--batch-convert/--no-batch-convert", help="Batch PDF conversion across multiple files when the selected engine supports it.")] = True,
-    include_chunk_details: Annotated[bool, typer.Option("--include-chunk-details", help="Append per-chunk candidate answers below the final merged answer.")] = False,
+    include_chunk_details: Annotated[bool, typer.Option("--include-chunk-details", help="Append per-chunk candidate answers for debugging; main output remains concise consolidation text.")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", help="Show detailed execution status and timing information.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Write extracted content to disk and skip Ollama extraction.")] = False,
 ) -> None:
@@ -312,7 +316,7 @@ def _process_pdfs(
             metrics.extract_seconds = perf_counter() - extract_started
 
             merge_started = perf_counter()
-            output_body = ollama_client.merge_chunk_evidence(chunk_outputs, resolved_prompt)
+            output_body = ollama_client.merge_chunk_evidence(chunk_outputs, resolved_prompt, model=model)
             metrics.merge_seconds = perf_counter() - merge_started
             if include_chunk_details:
                 chunk_details = format_chunked_output(chunk_outputs)

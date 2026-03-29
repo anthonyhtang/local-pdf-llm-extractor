@@ -1,6 +1,6 @@
 # Local PDF LLM Extractor
 
-Chinese version: [README.zh-CN.md](README.zh-CN.md)
+中文说明: [README.zh-CN.md](README.zh-CN.md)
 
 ```text
  /\_/\\   Local PDF LLM Extractor
@@ -32,6 +32,11 @@ What this project does instead:
 - Uses local parsing plus local LLM extraction as a controllable middle layer.
 - Prioritizes semantic screening precision over polished narrative output.
 - Produces intermediate evidence artifacts that can be sent later to stronger and more expensive models.
+
+Output intent:
+
+- The document-level result is intentionally concise and retrieval-oriented.
+- It is a screening intermediate artifact for downstream LLM processing, not a final narrative summary.
 
 In short, the local model's job here is retrieval and extraction, not final writing.
 
@@ -112,6 +117,27 @@ PDF(s)
   -> merge chunk evidence into one document output
   -> write Markdown result files
 ```
+
+## Retrieval and Consolidation Logic
+
+The retrieval and consolidation stage is intentionally simple.
+
+Chunk-level retrieval:
+
+- Each chunk is checked for whether it contains evidence relevant to the user query.
+- Non-relevant chunks are dropped.
+
+Document-level consolidation:
+
+- If one or more chunks contain relevant evidence, and multiple chunks converge on the same target event/object, the result is treated as EXISTS.
+- If no chunk contains relevant evidence, the result is treated as NOT EXISTS.
+- If chunks conflict and do not converge, the result is treated as UNCLEAR.
+
+Output format intent:
+
+- Return one compact paragraph for downstream processing.
+- Keep it concise and retrieval-oriented.
+- This is an intermediate artifact for stronger downstream LLMs, not the final narrative report.
 
 ## Dependencies and Credit
 
@@ -410,12 +436,12 @@ Important options:
 
 ## Engine Comparison
 
-| Engine | What it does | Strengths | Tradeoffs | Recommended use |
-| --- | --- | --- | --- | --- |
-| `fast` | Reads the embedded PDF text layer directly | Fastest path for text-based PDFs | Fails on image-only PDFs and does not reconstruct layout | Use when you know the PDF already has a usable text layer |
-| `fast-first` | Tries `fast`, then falls back automatically | Best convenience-to-speed balance | Fallback path is slower than direct extraction | Recommended default when document quality is unknown |
-| `mineru` | Performs higher-fidelity PDF reconstruction | Best layout recovery, tables, formulas, and GPU acceleration | Heavier runtime and dependency footprint | Use when output fidelity matters more than raw speed |
-| `pymupdf` | Uses a lighter Markdown conversion path | Simpler and lighter fallback | Lower fidelity on complex layouts | Use when MinerU is unavailable or intentionally avoided |
+| Engine         | What it does                                  | Strengths                                                    | Tradeoffs                                                | Recommended use                                           |
+| -------------- | --------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- | --------------------------------------------------------- |
+| `fast`       | Reads the embedded PDF text layer directly    | Fastest path for text-based PDFs                             | Fails on image-only PDFs and does not reconstruct layout | Use when you know the PDF already has a usable text layer |
+| `fast-first` | Tries `fast`, then falls back automatically | Best convenience-to-speed balance                            | Fallback path is slower than direct extraction           | Recommended default when document quality is unknown      |
+| `mineru`     | Performs higher-fidelity PDF reconstruction   | Best layout recovery, tables, formulas, and GPU acceleration | Heavier runtime and dependency footprint                 | Use when output fidelity matters more than raw speed      |
+| `pymupdf`    | Uses a lighter Markdown conversion path       | Simpler and lighter fallback                                 | Lower fidelity on complex layouts                        | Use when MinerU is unavailable or intentionally avoided   |
 
 ## Output Files
 
@@ -435,6 +461,8 @@ Full extraction outputs include:
 - prompt preview
 - date
 - merged evidence extracted from relevant chunks
+
+By design, this output is a compact retrieval result for downstream processing (for example, by a stronger hosted LLM), rather than a polished end-user report.
 
 If `--include-chunk-details` is enabled, the output also appends chunk-level candidate answers.
 
