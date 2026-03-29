@@ -37,7 +37,7 @@ class FileProcessingMetrics:
     convert_seconds: float = 0.0
     chunk_seconds: float = 0.0
     extract_seconds: float = 0.0
-    aggregate_seconds: float = 0.0
+    merge_seconds: float = 0.0
     write_seconds: float = 0.0
     total_seconds: float = 0.0
 
@@ -51,8 +51,8 @@ def main(
     engine: Annotated[Literal["mineru", "pymupdf", "fast", "fast-first"], typer.Option("--engine", case_sensitive=False, help="Extraction engine to use.")] = "mineru",
     fast_fallback: Annotated[bool, typer.Option("--fast-fallback", help="When --engine fast fails, fall back to the slower Markdown conversion pipeline. This is implied by --engine fast-first.")] = False,
     ollama_url: Annotated[str, typer.Option("--ollama-url", help="Base URL for the Ollama API.")] = "http://localhost:11434",
-    model: Annotated[str, typer.Option("--model", help="Ollama model name for final aggregation.")] = "qwen3.5:9b",
-    chunk_model: Annotated[str | None, typer.Option("--chunk-model", help="Optional faster Ollama model for chunk-level extraction. Defaults to --model.")] = None,
+    model: Annotated[str, typer.Option("--model", help="Ollama model name used for chunk-level extraction.")] = "qwen3.5:9b",
+    chunk_model: Annotated[str | None, typer.Option("--chunk-model", help="Optional model override for chunk-level extraction. Defaults to --model.")] = None,
     chunk_size: Annotated[int | None, typer.Option("--chunk-size", min=500, help="Maximum characters per chunk sent to Ollama. Leave unset to use adaptive defaults.")] = None,
     parallelism: Annotated[int, typer.Option("--parallelism", min=1, help="Maximum number of concurrent Ollama chunk requests.")] = 3,
     batch_convert: Annotated[bool, typer.Option("--batch-convert/--no-batch-convert", help="Batch PDF conversion across multiple files when the selected engine supports it.")] = True,
@@ -127,7 +127,7 @@ def _run(
             raise typer.Exit(code=1) from exc
         startup_seconds = perf_counter() - startup_started
         console.print(
-            f"[green]Ollama ready.[/green] Aggregate: [bold]{model}[/bold] | Chunk: [bold]{resolved_chunk_model}[/bold] | Available: {', '.join(available_models)}"
+            f"[green]Ollama ready.[/green] Primary: [bold]{model}[/bold] | Chunk: [bold]{resolved_chunk_model}[/bold] | Available: {', '.join(available_models)}"
         )
         if verbose:
             console.print(f"[blue]Ollama startup check:[/blue] {startup_seconds:.3f}s")
@@ -188,7 +188,7 @@ def _run(
         if ollama_client is not None:
             ollama_client.close()
 
-    console.rule("Summary")
+    console.rule("Run Report")
     console.print(f"Processed successfully: [bold]{success_count}[/bold]")
     console.print(f"Failed: [bold]{len(failures)}[/bold]")
     if metrics and verbose:
@@ -271,7 +271,7 @@ def _process_pdfs(
                 metrics.convert_seconds = perf_counter() - convert_started
             metrics.resolved_engine = resolved_engine
             metrics.chunk_model = chunk_model
-            metrics.aggregate_model = model
+            metrics.aggregate_model = "-"
             for warning in warnings:
                 console.print(f"[yellow]Warning:[/yellow] {warning}")
 
@@ -311,9 +311,9 @@ def _process_pdfs(
             chunk_outputs = ollama_client.extract_chunks_parallel(chunks, resolved_prompt, parallelism, model=chunk_model)
             metrics.extract_seconds = perf_counter() - extract_started
 
-            aggregate_started = perf_counter()
-            output_body = ollama_client.aggregate_chunk_results(chunk_outputs, resolved_prompt, model=model)
-            metrics.aggregate_seconds = perf_counter() - aggregate_started
+            merge_started = perf_counter()
+            output_body = ollama_client.merge_chunk_evidence(chunk_outputs, resolved_prompt)
+            metrics.merge_seconds = perf_counter() - merge_started
             if include_chunk_details:
                 chunk_details = format_chunked_output(chunk_outputs)
                 if chunk_details:
@@ -351,12 +351,20 @@ def _process_pdfs(
 
 def _resolve_prompt(prompt: str | None, prompt_file: Path | None) -> str:
     if prompt is not None:
-        return prompt.strip()
+        resolved = prompt.strip()
+        if resolved:
+            return resolved
+        console.print("[red]--prompt cannot be empty.[/red]")
+        raise typer.Exit(code=2)
     if prompt_file is not None:
-        return read_text_file(prompt_file)
+        resolved = read_text_file(prompt_file).strip()
+        if resolved:
+            return resolved
+        console.print("[red]--prompt-file is empty.[/red]")
+        raise typer.Exit(code=2)
 
-    default_prompt_file = Path(__file__).resolve().parents[2] / "prompts" / "default.txt"
-    return read_text_file(default_prompt_file)
+    console.print("[red]A prompt is required. Use --prompt or --prompt-file.[/red]")
+    raise typer.Exit(code=2)
 
 
 def _write_output(output_path: Path, content: str) -> None:
@@ -375,7 +383,7 @@ def _print_file_timing(metrics: FileProcessingMetrics) -> None:
         f"convert={metrics.convert_seconds:.3f}s | "
         f"chunk={metrics.chunk_seconds:.3f}s | "
         f"extract={metrics.extract_seconds:.3f}s | "
-        f"aggregate={metrics.aggregate_seconds:.3f}s | "
+        f"merge={metrics.merge_seconds:.3f}s | "
         f"write={metrics.write_seconds:.3f}s | "
         f"total={metrics.total_seconds:.3f}s"
     )
@@ -386,13 +394,13 @@ def _print_timing_summary(metrics_list: list[FileProcessingMetrics]) -> None:
     table.add_column("File")
     table.add_column("Engine")
     table.add_column("Chunk Model")
-    table.add_column("Aggregate")
+    table.add_column("Stage2")
     table.add_column("Chunks", justify="right")
     table.add_column("Chunk Size", justify="right")
     table.add_column("Convert", justify="right")
     table.add_column("Chunk", justify="right")
     table.add_column("Extract", justify="right")
-    table.add_column("Aggregate", justify="right")
+    table.add_column("Merge", justify="right")
     table.add_column("Write", justify="right")
     table.add_column("Total", justify="right")
 
@@ -407,7 +415,7 @@ def _print_timing_summary(metrics_list: list[FileProcessingMetrics]) -> None:
             f"{metrics.convert_seconds:.3f}s",
             f"{metrics.chunk_seconds:.3f}s",
             f"{metrics.extract_seconds:.3f}s",
-            f"{metrics.aggregate_seconds:.3f}s",
+            f"{metrics.merge_seconds:.3f}s",
             f"{metrics.write_seconds:.3f}s",
             f"{metrics.total_seconds:.3f}s",
         )

@@ -12,15 +12,42 @@ Local PDF LLM Extractor is a cross-platform Python CLI that extracts information
 
 ## Why This Project
 
+This project is not built for polished local summarization. It is built for semantic retrieval and evidence extraction across large PDF collections.
+
+The core use case is high-recall screening: quickly locate relevant documents and passages for a user-defined information need, then output structured evidence for downstream analysis.
+
+The practical need is simple: you often need to search many long PDFs for nuanced semantic signals, but existing approaches force trade-offs that are not acceptable for this workflow.
+
+Why not standard RAG as the primary decision layer:
+
+- RAG scales well for large corpora, but retrieval quality in nuanced semantic tasks (methodology, identification logic, causal claims) is often not precise enough for this workflow.
+
+Why not full remote premium models on full corpora:
+
+- Cost grows quickly with batch size and repeated querying.
+- Context windows are still a bottleneck when screening large document sets end-to-end.
+
+What this project does instead:
+
+- Uses local parsing plus local LLM extraction as a controllable middle layer.
+- Prioritizes semantic screening precision over polished narrative output.
+- Produces intermediate evidence artifacts that can be sent later to stronger and more expensive models.
+
+In short, the local model's job here is retrieval and extraction, not final writing.
+
+## Problem Context
+
 Many useful research questions are semantic rather than keyword-based. For example:
 
 - What statistical tool does this research use?
 - Does this paper rely on a natural experiment?
 - What identification strategy does the author claim?
 
-You can ask those questions directly to an AI model, but uploading an entire PDF into an agent context is expensive and token-intensive, especially for long papers and batch workflows.
+For a single document, sending a full PDF to a premium model is usually fine.
 
-This project exists to make that workflow practical: parse the PDF locally, reduce it into a structured text pipeline, and let a local LLM answer semantic questions without paying the repeated token cost of sending the raw document to a remote agent each time.
+The bottleneck appears when you need retrieval across large PDF collections: repeated querying, repeated context loading, and cross-document screening quickly become expensive and operationally hard to scale.
+
+This project makes that workflow practical: parse locally, chunk consistently, and run semantic extraction locally so you avoid repeatedly sending raw full documents to remote contexts.
 
 It combines three stages:
 
@@ -38,7 +65,7 @@ The project is designed for users who want a local-first workflow for research p
 - Works on Windows and Linux, including WSL-style paths.
 - Supports multi-file directory processing.
 - Supports batched MinerU conversion to reduce repeated parser initialization overhead.
-- Supports split-model inference, where one model handles chunk extraction and another handles final aggregation.
+- Supports split-model inference for chunk-level extraction and evidence screening.
 
 ## Who This Is For
 
@@ -56,7 +83,7 @@ The project is designed for users who want a local-first workflow for research p
 - Batch conversion mode for multi-file MinerU runs.
 - Adaptive chunk sizing.
 - Concurrent chunk extraction requests to Ollama.
-- Two-stage extraction: chunk candidates first, final answer aggregation second.
+- Two-stage extraction: chunk candidates first, evidence merge second.
 - Detailed verbose timing output.
 
 ## Project Status
@@ -71,7 +98,7 @@ The application has four main parts:
 
 - `src/pdf_extractor/cli.py`: Typer-based CLI entry point and orchestration.
 - `src/pdf_extractor/converter.py`: PDF parsing engines and batch conversion logic.
-- `src/pdf_extractor/extractor.py`: Ollama client, chunk extraction, and final aggregation.
+- `src/pdf_extractor/extractor.py`: Ollama client, chunk extraction, and evidence merging.
 - `src/pdf_extractor/utils.py`: chunking, file helpers, normalization, and output helpers.
 
 High-level flow:
@@ -82,7 +109,7 @@ PDF(s)
   -> normalize or reconstruct Markdown
   -> split into chunks
   -> send chunk prompts to Ollama
-  -> merge chunk answers into one final output
+  -> merge chunk evidence into one document output
   -> write Markdown result files
 ```
 
@@ -164,7 +191,7 @@ ollama pull qwen3.5:9b
 ollama pull gemma3:4b
 ```
 
-The default aggregation model in the CLI is `qwen3.5:9b`.
+The default extraction model in the CLI is `qwen3.5:9b`.
 
 Recommended local models for this workflow:
 
@@ -186,7 +213,7 @@ uv run pdf-extract --input path/to/file.pdf --dry-run
 ```bash
 uv run pdf-extract \
   --input path/to/file.pdf \
-  --prompt "Summarize the key findings in English" \
+  --prompt "Extract evidence about the policy shock, including date, location, and affected population" \
   --model qwen3.5:9b
 ```
 
@@ -204,7 +231,7 @@ If the document does not clearly contain the requested information, write exactl
 ```
 
 The extractor recognizes the final line above as a whole-document fallback rule.
-At chunk level it will use `NOT_RELEVANT` internally instead of letting a partial chunk emit the final fallback text, which helps aggregation stay consistent.
+At chunk level it will use `NOT_RELEVANT` internally instead of letting a partial chunk emit the final fallback text, then merge relevant chunk evidence without running a local summary stage.
 
 Example: exogenous shock extraction
 
@@ -224,7 +251,7 @@ If the document does not clearly contain the requested information, write exactl
 ```bash
 uv run pdf-extract \
   --input path/to/folder \
-  --prompt-file prompts/default.txt \
+  --prompt-file prompts/your_prompt.txt \
   --output-dir output
 ```
 
@@ -275,7 +302,7 @@ Process all PDFs in a folder recursively:
 ```bash
 uv run pdf-extract \
   --input fulltext \
-  --prompt-file prompts/default.txt \
+  --prompt-file prompts/your_prompt.txt \
   --output-dir output
 ```
 
@@ -286,7 +313,7 @@ uv run pdf-extract \
   --input fulltext \
   --engine mineru \
   --batch-convert \
-  --prompt-file prompts/default.txt \
+  --prompt-file prompts/your_prompt.txt \
   --output-dir output
 ```
 
@@ -297,13 +324,13 @@ uv run pdf-extract \
   --input fulltext \
   --engine mineru \
   --no-batch-convert \
-  --prompt-file prompts/default.txt \
+  --prompt-file prompts/your_prompt.txt \
   --output-dir output
 ```
 
 ### Model Selection
 
-Use one model for both chunk extraction and final aggregation:
+Use one model for chunk extraction:
 
 ```bash
 uv run pdf-extract \
@@ -312,7 +339,7 @@ uv run pdf-extract \
   --model qwen3.5:9b
 ```
 
-Use a smaller chunk model and a stronger aggregation model:
+Use a smaller chunk model for faster chunk-level retrieval:
 
 ```bash
 uv run pdf-extract \
@@ -375,8 +402,8 @@ Important options:
 - `--prompt-file`: read the extraction instruction from a file.
 - `--output-dir`: write outputs to a dedicated directory instead of each source directory.
 - `--engine`: choose the parsing strategy.
-- `--model`: final aggregation model.
-- `--chunk-model`: optional faster model for chunk-level extraction.
+- `--model`: default model for chunk-level extraction.
+- `--chunk-model`: optional override model for chunk-level extraction.
 - `--parallelism`: number of concurrent chunk requests sent to Ollama.
 - `--verbose`: print startup, plan, and timing details.
 - `--dry-run`: skip Ollama and only write converted text or Markdown.
@@ -407,7 +434,7 @@ Full extraction outputs include:
 - engine metadata
 - prompt preview
 - date
-- final extracted answer
+- merged evidence extracted from relevant chunks
 
 If `--include-chunk-details` is enabled, the output also appends chunk-level candidate answers.
 
@@ -415,7 +442,7 @@ If `--include-chunk-details` is enabled, the output also appends chunk-level can
 
 - `fast` and `fast-first` are usually the fastest choices when the PDF contains a usable text layer.
 - Once PDF parsing becomes fast enough, Ollama inference usually becomes the dominant cost.
-- Split-model inference can reduce runtime significantly by using a small chunk model and a stronger final aggregation model.
+- Chunk-level model choice strongly affects throughput and recall quality for local retrieval.
 - Batch conversion helps most when multiple PDFs are processed with `mineru` and initialization overhead would otherwise repeat.
 
 ## Windows and Linux Path Support

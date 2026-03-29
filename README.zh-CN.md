@@ -10,7 +10,32 @@ English version: [README.md](README.md)
 
 Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在本地从 PDF 中抽取信息，并结合本地大语言模型进行语义问答与信息提取。
 
-## 为什么要做这个项目
+## 为什么会有这个项目
+
+这个项目不是为了在本地写“漂亮摘要”，而是为了解决大量 PDF 的语义检索与证据抽取问题。
+
+核心目标是高召回筛查：根据用户给定的信息需求，快速定位相关文档与证据片段，并输出结构化结果，供后续分析使用。
+
+现实约束很明确：你需要在大量长文档里找细粒度语义信息，但常见路径都存在明显短板。
+
+为什么不把标准 RAG 作为主要决策层：
+
+- RAG 在大规模文档检索上很有价值，但在细粒度语义任务（方法识别、因果主张、识别策略）上，检索精度通常还不够稳定。
+
+为什么不直接把全量文档交给昂贵云端大模型：
+
+- 成本会随着文档规模和重复查询快速上升。
+- 上下文窗口仍然难以承载大规模、多文档端到端筛查。
+
+这个项目的做法：
+
+- 用本地解析 + 本地 LLM 抽取作为可控中间层。
+- 优先保证语义筛查与证据抽取，而不是本地叙事摘要。
+- 产出中间证据结果，后续再交给更强、更昂贵的模型做深度推理或写作。
+
+简而言之，本地模型在这里负责“找证据”，不是“写终稿”。
+
+## 问题场景
 
 很多研究问题并不是简单的关键词搜索，而是语义层面的提问，例如：
 
@@ -18,15 +43,17 @@ Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在
 - 这项研究是否使用了自然实验？
 - 作者声称的识别策略是什么？
 
-如果直接把整篇 PDF 上传给 AI agent 去问，这种方式通常会非常耗费 token，尤其是在论文很长、文档很多、或者需要反复提问的时候，成本和上下文负担都会很高。
+如果只是单篇 PDF，直接交给商用大模型处理通常没有问题。
 
-这个项目的目标就是把这件事本地化、工程化：先在本地把 PDF 解析成结构化文本，再按合理块大小送给本地 LLM，让你可以对 PDF 进行语义查询，而不必每次都把整篇原始文档塞进远程上下文里。
+真正的瓶颈出现在“大量 PDF 的检索任务”上：需要反复查询、反复装载上下文、跨文档筛查，成本会快速上升，工程上也很难扩展。
+
+这个项目的目标是把流程本地化、工程化：先在本地把 PDF 解析成结构化文本，再按稳定 chunk 方式送给本地 LLM 做语义抽取，避免每次都把整篇原始文档塞进远程上下文。
 
 整个流程大致分成三步：
 
 1. 把 PDF 解析成 Markdown 或规范化文本。
 2. 把文本切分成适合 LLM 处理的块。
-3. 通过本地 Ollama 模型完成抽取与汇总。
+3. 通过本地 Ollama 模型完成 chunk 级抽取与证据合并。
 
 这个项目适合想要在本地完成研究论文、报告、内部文档分析的人，尤其适合希望避免云端上传、减少 token 消耗、并保留可重复工作流的场景。
 
@@ -38,7 +65,7 @@ Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在
 - 支持 Windows、Linux，以及 WSL 风格路径。
 - 支持目录批处理。
 - 支持 MinerU 批量转换，减少重复初始化开销。
-- 支持 chunk 模型与最终聚合模型分离。
+- 支持 split-model 推理，用于 chunk 级抽取与证据筛查。
 
 ## 核心特性
 
@@ -49,7 +76,7 @@ Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在
 - 多文件批量转换。
 - 自适应 chunk 大小。
 - 并发发送 chunk 到 Ollama。
-- 两阶段抽取：先抽 chunk 候选，再做最终聚合。
+- 两阶段抽取：先抽 chunk 候选，再进行证据去重与合并。
 - 详细 verbose 计时输出。
 
 ## 项目状态
@@ -64,7 +91,7 @@ Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在
 
 - `src/pdf_extractor/cli.py`：Typer 命令行入口与流程编排。
 - `src/pdf_extractor/converter.py`：PDF 解析引擎与批量转换逻辑。
-- `src/pdf_extractor/extractor.py`：Ollama 客户端、chunk 抽取与最终聚合。
+- `src/pdf_extractor/extractor.py`：Ollama 客户端、chunk 抽取与证据合并。
 - `src/pdf_extractor/utils.py`：切块、文件工具、文本规范化与输出辅助函数。
 
 高层流程：
@@ -75,7 +102,7 @@ PDF
   -> 生成纯文本或 Markdown
   -> 切分为多个 chunk
   -> 将 chunk 发送给 Ollama
-  -> 聚合为最终答案
+  -> 合并为证据结果
   -> 写出 Markdown 文件
 ```
 
@@ -155,7 +182,7 @@ ollama pull qwen3.5:9b
 ollama pull gemma3:4b
 ```
 
-CLI 默认的最终聚合模型是 `qwen3.5:9b`。
+CLI 默认的抽取模型是 `qwen3.5:9b`。
 
 推荐的本地模型组合：
 
@@ -177,7 +204,7 @@ uv run pdf-extract --input path/to/file.pdf --dry-run
 ```bash
 uv run pdf-extract \
   --input path/to/file.pdf \
-  --prompt "请用中文总结这篇文献的关键发现" \
+  --prompt "提取与外生冲击相关的证据，包括时间、地点和受影响对象" \
   --model qwen3.5:9b
 ```
 
@@ -195,7 +222,7 @@ If the document does not clearly contain the requested information, write exactl
 ```
 
 程序会把最后这一行识别为“整篇文档级别”的 fallback 规则。
-在 chunk 阶段，如果局部证据不足，程序会内部使用 `NOT_RELEVANT`，而不会让单个 chunk 直接输出最终 fallback 文本，这样聚合时更稳定。
+在 chunk 阶段，如果局部证据不足，程序会内部使用 `NOT_RELEVANT`，而不会让单个 chunk 直接输出最终 fallback 文本，随后仅对相关 chunk 证据做去重合并。
 
 例子：识别外生冲击
 
@@ -215,7 +242,7 @@ If the document does not clearly contain the requested information, write exactl
 ```bash
 uv run pdf-extract \
   --input path/to/folder \
-  --prompt-file prompts/default.txt \
+  --prompt-file prompts/your_prompt.txt \
   --output-dir output
 ```
 
@@ -266,7 +293,7 @@ uv run pdf-extract \
 ```bash
 uv run pdf-extract \
   --input fulltext \
-  --prompt-file prompts/default.txt \
+  --prompt-file prompts/your_prompt.txt \
   --output-dir output
 ```
 
@@ -277,7 +304,7 @@ uv run pdf-extract \
   --input fulltext \
   --engine mineru \
   --batch-convert \
-  --prompt-file prompts/default.txt \
+  --prompt-file prompts/your_prompt.txt \
   --output-dir output
 ```
 
@@ -288,13 +315,13 @@ uv run pdf-extract \
   --input fulltext \
   --engine mineru \
   --no-batch-convert \
-  --prompt-file prompts/default.txt \
+  --prompt-file prompts/your_prompt.txt \
   --output-dir output
 ```
 
 ### 模型选择
 
-同一个模型同时用于 chunk 抽取和最终聚合：
+同一个模型用于 chunk 抽取：
 
 ```bash
 uv run pdf-extract \
@@ -303,7 +330,7 @@ uv run pdf-extract \
   --model qwen3.5:9b
 ```
 
-使用较小模型做 chunk 抽取，使用较强模型做最终聚合：
+使用较小模型做 chunk 抽取以提升速度：
 
 ```bash
 uv run pdf-extract \
@@ -366,8 +393,8 @@ pdf-extract \
 - `--prompt-file`：从文件中读取抽取指令。
 - `--output-dir`：输出到指定目录，而不是写回输入 PDF 所在目录。
 - `--engine`：选择 PDF 解析策略。
-- `--model`：最终聚合模型。
-- `--chunk-model`：可选的 chunk 抽取模型。
+- `--model`：默认的 chunk 抽取模型。
+- `--chunk-model`：可选的 chunk 抽取覆盖模型。
 - `--parallelism`：并发发送到 Ollama 的 chunk 数量。
 - `--verbose`：打印启动、规划与计时细节。
 - `--dry-run`：跳过 Ollama，只写中间转换结果。
@@ -398,7 +425,7 @@ pdf-extract \
 - 引擎信息
 - 提示词预览
 - 日期
-- 最终抽取答案
+- 从相关 chunk 合并得到的证据
 
 如果开启 `--include-chunk-details`，输出还会追加每个 chunk 的候选答案。
 
@@ -406,7 +433,7 @@ pdf-extract \
 
 - 对于带有文本层的 PDF，`fast` 和 `fast-first` 通常是最快的。
 - 当 PDF 解析足够快之后，主要瓶颈通常会转移到 Ollama 推理。
-- 使用较小的 chunk 模型和较强的最终聚合模型，往往可以显著减少整体运行时间。
+- chunk 模型选择会显著影响本地检索吞吐与召回质量。
 - 批量转换在多个 PDF 使用 `mineru` 时更有价值，因为它可以摊薄初始化开销。
 
 ## Windows 与 Linux 路径支持
