@@ -1,18 +1,18 @@
-# Local PDF LLM Extractor
+# Semantic PDF Retriever
 
 中文说明: [README.zh-CN.md](README.zh-CN.md)
 
 ```text
- /\_/\\   Local PDF LLM Extractor
-( o.o )   Parse locally, ask semantically
+ /\_/\\   Semantic PDF Retriever
+( o.o )   Parse PDFs, ask semantically
  > ^ <    Chunk, ask, merge
 ```
 
-Local PDF LLM Extractor is a cross-platform Python CLI that extracts information from PDF documents on your own machine.
+Semantic PDF Retriever is a cross-platform Python CLI that extracts information from PDF documents on your own machine.
 
 ## Why This Project
 
-This project is not built for polished local summarization. It is built for semantic retrieval and evidence extraction across large PDF collections.
+This project is not built for polished summarization. It is built for semantic retrieval and evidence extraction across large PDF collections.
 
 The core use case is high-recall screening: quickly locate relevant documents and passages for a user-defined information need, then output structured evidence for downstream analysis.
 
@@ -22,14 +22,15 @@ Why not standard RAG as the primary decision layer:
 
 - RAG scales well for large corpora, but retrieval quality in nuanced semantic tasks (methodology, identification logic, causal claims) is often not precise enough for this workflow.
 
-Why not full remote premium models on full corpora:
+Why not full online premium models (ChatGPT/Claude/Gemini/etc.) on full corpora:
 
 - Cost grows quickly with batch size and repeated querying.
+- At scale, cost is multiplicative: total spend roughly tracks number of PDFs × number of query rounds × average tokens per round, which becomes expensive very quickly in screening workflows.
 - Context windows are still a bottleneck when screening large document sets end-to-end.
 
 What this project does instead:
 
-- Uses local parsing plus local LLM extraction as a controllable middle layer.
+- Uses robust parsing plus lite-model extraction as a controllable middle layer.
 - Prioritizes semantic screening precision over polished narrative output.
 - Produces intermediate evidence artifacts that can be sent later to stronger and more expensive models.
 
@@ -38,34 +39,34 @@ Output intent:
 - The document-level result is intentionally concise and retrieval-oriented.
 - It is a screening intermediate artifact for downstream LLM processing, not a final narrative summary.
 
-In short, the local model's job here is retrieval and extraction, not final writing.
+In short, the model layer's job here is retrieval and extraction, not final writing.
 
 ## Problem Context
 
 Many useful research questions are semantic rather than keyword-based. For example:
 
-- What statistical tool does this research use?
-- Does this paper rely on a natural experiment?
-- What identification strategy does the author claim?
+- In a folder of hundreds of papers, which PDFs use event-study specifications?
+- Across a large report set, which documents clearly rely on natural experiments?
+- In a batch screening run, which files explicitly describe identification strategy assumptions?
 
-For a single document, sending a full PDF to a premium model is usually fine.
+For a small one-off document check, sending a full PDF to a premium model can be acceptable.
 
-The bottleneck appears when you need retrieval across large PDF collections: repeated querying, repeated context loading, and cross-document screening quickly become expensive and operationally hard to scale.
+The bottleneck appears when you need screening across large PDF collections: repeated querying, repeated context loading, and cross-document screening quickly become expensive and operationally hard to scale.
 
-This project makes that workflow practical: parse locally, chunk consistently, and run semantic extraction locally so you avoid repeatedly sending raw full documents to remote contexts.
+This project makes that workflow practical: parse consistently, chunk consistently, and run semantic extraction through configurable lite models so you avoid repeatedly sending raw full documents to expensive remote contexts.
 
 It combines three stages:
 
 1. PDF parsing into Markdown or normalized plain text.
 2. Chunking the extracted content into LLM-friendly segments.
-3. Local LLM-based information extraction through Ollama.
+3. Lite-model-based information extraction through either a local provider or OpenRouter.
 
-The project is designed for users who want a local-first workflow for research papers, reports, and internal documents without sending content to a hosted API.
+The project is designed for users who want a controllable workflow for research papers, reports, and internal documents, with flexible provider choices.
 
 ## What This Project Does
 
 - Converts PDFs into Markdown or normalized text.
-- Uses local Ollama models to answer structured extraction prompts.
+- Uses lite models from either local runtime (Ollama-compatible) or OpenRouter low-cost/free models.
 - Supports both high-fidelity parsing and faster text-first parsing.
 - Works on Windows and Linux, including WSL-style paths.
 - Supports multi-file directory processing.
@@ -75,9 +76,9 @@ The project is designed for users who want a local-first workflow for research p
 ## Who This Is For
 
 - Researchers extracting evidence or study design details from papers.
-- Analysts reviewing reports and long-form PDFs locally.
+- Analysts reviewing reports and long-form PDFs with reproducible pipelines.
 - Developers who want a reproducible CLI pipeline built with `uv`.
-- Teams that need a transparent local workflow instead of a cloud-only document pipeline.
+- Teams that need a transparent workflow instead of a cloud-only document pipeline.
 
 ## Core Features
 
@@ -87,7 +88,7 @@ The project is designed for users who want a local-first workflow for research p
 - `pymupdf` fallback engine for a lighter-weight Markdown path.
 - Batch conversion mode for multi-file MinerU runs.
 - Adaptive chunk sizing.
-- Concurrent chunk extraction requests to Ollama.
+- Concurrent chunk extraction requests to the configured model provider.
 - Two-stage extraction: chunk candidates first, evidence merge second.
 - Detailed verbose timing output.
 
@@ -103,7 +104,7 @@ The application has four main parts:
 
 - `src/pdf_extractor/cli.py`: Typer-based CLI entry point and orchestration.
 - `src/pdf_extractor/converter.py`: PDF parsing engines and batch conversion logic.
-- `src/pdf_extractor/extractor.py`: Ollama client, chunk extraction, and evidence merging.
+- `src/pdf_extractor/extractor.py`: provider client, chunk extraction, and evidence merging.
 - `src/pdf_extractor/utils.py`: chunking, file helpers, normalization, and output helpers.
 
 High-level flow:
@@ -113,7 +114,7 @@ PDF(s)
   -> parse with fast / fast-first / mineru / pymupdf
   -> normalize or reconstruct Markdown
   -> split into chunks
-  -> send chunk prompts to Ollama
+  -> send chunk prompts to configured lite model provider
   -> merge chunk evidence into one document output
   -> write Markdown result files
 ```
@@ -129,15 +130,25 @@ Chunk-level retrieval:
 
 Document-level consolidation:
 
-- If one or more chunks contain relevant evidence, and multiple chunks converge on the same target event/object, the result is treated as EXISTS.
-- If no chunk contains relevant evidence, the result is treated as NOT EXISTS.
-- If chunks conflict and do not converge, the result is treated as UNCLEAR.
+- Consolidation is task-general and follows the user query.
+- For existence-style queries, it returns EXISTS or NOT EXISTS based on whether any sufficiently supported hit is present.
+- For non-existence queries, it does not force existence labels and instead follows the requested output format.
+- If multiple distinct supported hits are present, it combines them in one coherent result instead of treating this as a conflict.
 
 Output format intent:
 
 - Return one compact paragraph for downstream processing.
 - Keep it concise and retrieval-oriented.
 - This is an intermediate artifact for stronger downstream LLMs, not the final narrative report.
+
+## Prompt Templates (Core Tuning Point)
+
+The chunk and consolidation prompts are defined in files, not hardcoded in Python logic:
+
+- `prompts/chunk_prompt.txt`: controls per-chunk retrieval behavior.
+- `prompts/consolidation_prompt.txt`: controls document-level consolidation behavior.
+
+These templates are a primary tuning surface for quality and style. You can adjust strictness, detail level, output format constraints, and decision behavior without changing application code.
 
 ## Dependencies and Credit
 
@@ -148,9 +159,10 @@ Primary upstream dependencies:
 - `MinerU` for high-fidelity PDF parsing and layout reconstruction.
 - `PyMuPDF` and `pymupdf4llm` for direct text extraction and lightweight Markdown conversion.
 - `Ollama` for local LLM serving.
+- `OpenRouter` for hosted low-cost/free lite models.
 - `PyTorch` and `torchvision` for GPU-enabled runtime support used by MinerU.
 - `Typer` for the CLI.
-- `httpx` for local Ollama HTTP communication.
+- `httpx` for provider HTTP communication.
 - `rich` for terminal formatting and timing tables.
 
 Credit belongs to the maintainers of those upstream projects for the core parsing, model-serving, and runtime capabilities this tool builds on top of.
@@ -161,8 +173,9 @@ Runtime requirements:
 
 - Python 3.11 or newer.
 - `uv` for environment and dependency management.
-- A running Ollama instance, by default at `http://localhost:11434`.
-- At least one installed Ollama generation model.
+- One configured model provider:
+  - local provider at `http://localhost:11434` (Ollama-compatible), or
+  - OpenRouter API access key via environment variable.
 
 Optional but recommended:
 
@@ -204,7 +217,11 @@ On Windows PowerShell, activation is typically:
 .venv\Scripts\Activate.ps1
 ```
 
-## Ollama Setup
+## Lite Model Provider Setup
+
+You can run with either a local provider (`--provider local`) or OpenRouter (`--provider openrouter`).
+
+### Local Provider (Ollama-compatible)
 
 Start Ollama locally and make sure the model you want to use has been pulled.
 
@@ -217,7 +234,48 @@ ollama pull qwen3.5:9b
 ollama pull gemma3:4b
 ```
 
-The default extraction model in the CLI is `qwen3.5:9b`.
+### OpenRouter Provider
+
+Set your key in an environment variable (default variable name is `OPENROUTER_API_KEY_Test`):
+
+```powershell
+$env:OPENROUTER_API_KEY_Test = "<your-key>"
+```
+
+Windows persistent user environment variable:
+
+```powershell
+setx OPENROUTER_API_KEY_Test "<your-key>"
+```
+
+Available free-model presets:
+
+- `minimax/minimax-m2.5:free`
+- `openai/gpt-oss-120b:free`
+- `google/gemini-2.5-flash-lite`
+- `z-ai/glm-4.5-air:free`
+
+Recommended robust preset (validated in this project):
+
+```bash
+uv run pdf-extract \
+  --input path/to/file.pdf \
+  --provider openrouter \
+  --model minimax/minimax-m2.5:free \
+  --engine fast-first \
+  --parallelism 2 \
+  --min-request-interval 1.0 \
+  --max-retries 4 \
+  --prompt-file prompts/your_prompt.txt
+```
+
+If this model keeps failing due to upstream provider instability, switch only the model:
+
+```bash
+--model openai/gpt-oss-120b:free
+```
+
+The default extraction model in the CLI remains `qwen3.5:9b` for local mode.
 
 Recommended local models for this workflow:
 
@@ -228,7 +286,7 @@ Recommended local models for this workflow:
 
 ### 1. Dry-run a single PDF
 
-This converts the PDF to Markdown or text and writes the intermediate output without calling Ollama.
+This converts the PDF to Markdown or text and writes the intermediate output without calling any model API.
 
 ```bash
 uv run pdf-extract --input path/to/file.pdf --dry-run
@@ -241,6 +299,20 @@ uv run pdf-extract \
   --input path/to/file.pdf \
   --prompt "Extract evidence about the policy shock, including date, location, and affected population" \
   --model qwen3.5:9b
+```
+
+Use OpenRouter free model:
+
+```bash
+uv run pdf-extract \
+  --input path/to/file.pdf \
+  --provider openrouter \
+  --model minimax/minimax-m2.5:free \
+  --engine fast-first \
+  --parallelism 2 \
+  --min-request-interval 1.0 \
+  --max-retries 4 \
+  --prompt "Extract evidence about the policy shock, including date, location, and affected population"
 ```
 
 Official structured prompt template:
@@ -410,11 +482,16 @@ pdf-extract \
   --output-dir PATH \
   --engine [mineru|pymupdf|fast|fast-first] \
   --fast-fallback \
-  --ollama-url TEXT \
+  --provider [local|openrouter] \
+  --local-url TEXT \
+  --openrouter-url TEXT \
+  --openrouter-api-key-env TEXT \
   --model TEXT \
   --chunk-model TEXT \
   --chunk-size INT \
   --parallelism INT \
+  --min-request-interval FLOAT \
+  --max-retries INT \
   --batch-convert / --no-batch-convert \
   --include-chunk-details \
   --verbose \
@@ -428,11 +505,28 @@ Important options:
 - `--prompt-file`: read the extraction instruction from a file.
 - `--output-dir`: write outputs to a dedicated directory instead of each source directory.
 - `--engine`: choose the parsing strategy.
+- `--provider`: `local` (default) or `openrouter`.
+- `--local-url`: local provider base URL (Ollama-compatible).
+- `--openrouter-api-key-env`: env var name for OpenRouter API key (default `OPENROUTER_API_KEY_Test`).
 - `--model`: default model for chunk-level extraction.
 - `--chunk-model`: optional override model for chunk-level extraction.
-- `--parallelism`: number of concurrent chunk requests sent to Ollama.
+- `--parallelism`: number of concurrent chunk requests sent to provider. Default is `2`.
+- `--min-request-interval`: minimum delay between outbound requests. Defaults to `1.0s` in OpenRouter mode.
+- `--max-retries`: retry count for timeouts/429/5xx.
 - `--verbose`: print startup, plan, and timing details.
-- `--dry-run`: skip Ollama and only write converted text or Markdown.
+- `--dry-run`: skip provider calls and only write converted text or Markdown.
+
+## Remote API Rate-Limit Defaults
+
+When `--provider openrouter` is used, the CLI applies conservative defaults to reduce ban/throttle risk:
+
+- Parallelism is capped at `2`.
+- Minimum request interval defaults to `1.0` second.
+- `429`, `408`, `5xx` responses are retried with exponential backoff and jitter.
+- If the provider returns `Retry-After`, that server hint is honored before retrying.
+- If OpenRouter `/models` startup probing fails transiently, runtime requests still proceed with warning mode.
+
+These defaults are intentionally conservative for long-running multi-PDF jobs.
 
 ## Engine Comparison
 
@@ -469,7 +563,7 @@ If `--include-chunk-details` is enabled, the output also appends chunk-level can
 ## Performance Notes
 
 - `fast` and `fast-first` are usually the fastest choices when the PDF contains a usable text layer.
-- Once PDF parsing becomes fast enough, Ollama inference usually becomes the dominant cost.
+- Once PDF parsing becomes fast enough, model inference usually becomes the dominant cost.
 - Chunk-level model choice strongly affects throughput and recall quality for local retrieval.
 - Batch conversion helps most when multiple PDFs are processed with `mineru` and initialization overhead would otherwise repeat.
 
@@ -514,8 +608,8 @@ Ignored from version control:
 
 1. `uv sync` completes successfully.
 2. `uv run pdf-extract --help` shows the CLI options.
-3. `uv run pdf-extract --input path/to/file.pdf --dry-run` writes a conversion artifact without calling Ollama.
-4. `uv run pdf-extract --input path/to/file.pdf --prompt "..."` calls Ollama and writes an extraction artifact.
+3. `uv run pdf-extract --input path/to/file.pdf --dry-run` writes a conversion artifact without calling any provider.
+4. `uv run pdf-extract --input path/to/file.pdf --prompt "..."` calls the configured provider and writes an extraction artifact.
 5. `uv run pdf-extract --input path/to/folder --batch-convert --dry-run` processes multiple PDFs successfully.
 
 ## License and Upstream Notice

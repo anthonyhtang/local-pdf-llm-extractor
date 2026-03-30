@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from time import perf_counter
 from typing import Annotated, Literal
@@ -11,7 +12,7 @@ from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, T
 from rich.table import Table
 
 from pdf_extractor.converter import ConversionError, convert_pdf, convert_pdfs
-from pdf_extractor.extractor import OllamaClient, OllamaError
+from pdf_extractor.extractor import LiteModelClient, ModelProviderError
 from pdf_extractor.utils import (
     build_output_path,
     discover_pdf_files,
@@ -54,15 +55,20 @@ def main(
     output_dir: Annotated[Path | None, typer.Option("--output-dir", file_okay=False, dir_okay=True, writable=True, path_type=Path, help="Directory to write outputs to. Defaults to each PDF directory.")] = None,
     engine: Annotated[Literal["mineru", "pymupdf", "fast", "fast-first"], typer.Option("--engine", case_sensitive=False, help="Extraction engine to use.")] = "mineru",
     fast_fallback: Annotated[bool, typer.Option("--fast-fallback", help="When --engine fast fails, fall back to the slower Markdown conversion pipeline. This is implied by --engine fast-first.")] = False,
-    ollama_url: Annotated[str, typer.Option("--ollama-url", help="Base URL for the Ollama API.")] = "http://localhost:11434",
-    model: Annotated[str, typer.Option("--model", help="Ollama model for chunk extraction and document-level consolidation.")] = "qwen3.5:9b",
+    provider: Annotated[Literal["local", "openrouter"], typer.Option("--provider", case_sensitive=False, help="Lite model provider to use.")] = "local",
+    local_url: Annotated[str, typer.Option("--local-url", "--ollama-url", help="Base URL for the local model API (Ollama-compatible).")]= "http://localhost:11434",
+    openrouter_url: Annotated[str, typer.Option("--openrouter-url", help="Base URL for OpenRouter API.")] = "https://openrouter.ai/api/v1",
+    openrouter_api_key_env: Annotated[str, typer.Option("--openrouter-api-key-env", help="Environment variable name that stores the OpenRouter API key.")] = "OPENROUTER_API_KEY_Test",
+    model: Annotated[str, typer.Option("--model", help="Model name for chunk extraction and document-level consolidation.")] = "qwen3.5:9b",
     chunk_model: Annotated[str | None, typer.Option("--chunk-model", help="Optional model override for chunk-level extraction. Defaults to --model.")] = None,
-    chunk_size: Annotated[int | None, typer.Option("--chunk-size", min=500, help="Maximum characters per chunk sent to Ollama. Leave unset to use adaptive defaults.")] = None,
-    parallelism: Annotated[int, typer.Option("--parallelism", min=1, help="Maximum number of concurrent Ollama chunk requests.")] = 3,
+    chunk_size: Annotated[int | None, typer.Option("--chunk-size", min=500, help="Maximum characters per chunk sent to the model provider. Leave unset to use adaptive defaults.")] = None,
+    parallelism: Annotated[int, typer.Option("--parallelism", min=1, help="Maximum number of concurrent chunk requests.")] = 2,
+    min_request_interval: Annotated[float | None, typer.Option("--min-request-interval", min=0.0, help="Minimum seconds between outbound model API requests. Defaults: local=0.0, openrouter=1.0.")] = None,
+    max_retries: Annotated[int, typer.Option("--max-retries", min=0, help="Maximum retry attempts for model API timeouts and throttling responses.")] = 4,
     batch_convert: Annotated[bool, typer.Option("--batch-convert/--no-batch-convert", help="Batch PDF conversion across multiple files when the selected engine supports it.")] = True,
     include_chunk_details: Annotated[bool, typer.Option("--include-chunk-details", help="Append per-chunk candidate answers for debugging; main output remains concise consolidation text.")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", help="Show detailed execution status and timing information.")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Write extracted content to disk and skip Ollama extraction.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Write extracted content to disk and skip model API extraction.")] = False,
 ) -> None:
     try:
         _run(
@@ -72,11 +78,16 @@ def main(
             output_dir=output_dir,
             engine=engine,
             fast_fallback=fast_fallback,
-            ollama_url=ollama_url,
+            provider=provider,
+            local_url=local_url,
+            openrouter_url=openrouter_url,
+            openrouter_api_key_env=openrouter_api_key_env,
             model=model,
             chunk_model=chunk_model,
             chunk_size=chunk_size,
             parallelism=parallelism,
+            min_request_interval=min_request_interval,
+            max_retries=max_retries,
             batch_convert=batch_convert,
             include_chunk_details=include_chunk_details,
             verbose=verbose,
@@ -96,11 +107,16 @@ def _run(
     output_dir: Path | None,
     engine: Literal["mineru", "pymupdf", "fast", "fast-first"],
     fast_fallback: bool,
-    ollama_url: str,
+    provider: Literal["local", "openrouter"],
+    local_url: str,
+    openrouter_url: str,
+    openrouter_api_key_env: str,
     model: str,
     chunk_model: str | None,
     chunk_size: int | None,
     parallelism: int,
+    min_request_interval: float | None,
+    max_retries: int,
     batch_convert: bool,
     include_chunk_details: bool,
     verbose: bool,
@@ -116,25 +132,68 @@ def _run(
         console.print(f"[red]No PDF files found at {input_path}.[/red]")
         raise typer.Exit(code=1)
 
+    if provider == "openrouter" and parallelism > 2:
+        console.print("[yellow]OpenRouter mode caps parallelism at 2 by default to avoid API throttling.[/yellow]")
+        parallelism = 2
+
     resolved_chunk_model = chunk_model or model
 
-    ollama_client: OllamaClient | None = None
+    model_client: LiteModelClient | None = None
     startup_seconds = 0.0
     if not dry_run:
         startup_started = perf_counter()
-        ollama_client = OllamaClient(base_url=ollama_url, model=model)
+        api_key: str | None = None
+        base_url = local_url
+        if provider == "openrouter":
+            base_url = openrouter_url
+            api_key = os.environ.get(openrouter_api_key_env, "").strip() or None
+            if not api_key:
+                console.print(
+                    f"[red]Missing OpenRouter API key. Set env var {openrouter_api_key_env} before running.[/red]"
+                )
+                raise typer.Exit(code=2)
+
+        effective_min_interval = min_request_interval
+        if effective_min_interval is None:
+            effective_min_interval = 1.0 if provider == "openrouter" else 0.0
+
+        model_client = LiteModelClient(
+            provider=provider,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            min_request_interval_seconds=effective_min_interval,
+            max_retries=max_retries,
+        )
+        startup_check_warning: str | None = None
         try:
-            available_models = ollama_client.ensure_model_available([model, resolved_chunk_model])
-        except OllamaError as exc:
-            console.print(f"[red]{exc}[/red]")
-            ollama_client.close()
-            raise typer.Exit(code=1) from exc
+            available_models = model_client.ensure_model_available([model, resolved_chunk_model])
+        except ModelProviderError as exc:
+            message = str(exc)
+            is_transient_openrouter_startup = (
+                provider == "openrouter"
+                and message.startswith("Unable to reach OpenRouter")
+            )
+            if is_transient_openrouter_startup:
+                startup_check_warning = message
+                available_models = [model, resolved_chunk_model]
+            else:
+                console.print(f"[red]{exc}[/red]")
+                model_client.close()
+                raise typer.Exit(code=1) from exc
         startup_seconds = perf_counter() - startup_started
         console.print(
-            f"[green]Ollama ready.[/green] Primary: [bold]{model}[/bold] | Chunk: [bold]{resolved_chunk_model}[/bold] | Available: {', '.join(available_models)}"
+            f"[green]Model provider ready.[/green] Provider: [bold]{provider}[/bold] | Primary: [bold]{model}[/bold] | Chunk: [bold]{resolved_chunk_model}[/bold] | Available: {', '.join(available_models)}"
         )
+        if startup_check_warning:
+            console.print(
+                "[yellow]Startup model-list probe failed transiently; continuing with runtime requests.[/yellow] "
+                f"{startup_check_warning}"
+            )
         if verbose:
-            console.print(f"[blue]Ollama startup check:[/blue] {startup_seconds:.3f}s")
+            console.print(
+                f"[blue]Provider startup check:[/blue] {startup_seconds:.3f}s | min_interval={effective_min_interval:.2f}s | retries={max_retries}"
+            )
 
     failures: list[tuple[Path, str]] = []
     success_count = 0
@@ -167,7 +226,7 @@ def _run(
                     model=model,
                     chunk_model=resolved_chunk_model,
                     resolved_prompt=resolved_prompt,
-                    ollama_client=ollama_client,
+                    model_client=model_client,
                 )
         else:
             success_count, failures, metrics = _process_pdfs(
@@ -186,11 +245,11 @@ def _run(
                 model=model,
                 chunk_model=resolved_chunk_model,
                 resolved_prompt=resolved_prompt,
-                ollama_client=ollama_client,
+                model_client=model_client,
             )
     finally:
-        if ollama_client is not None:
-            ollama_client.close()
+        if model_client is not None:
+            model_client.close()
 
     console.rule("Run Report")
     console.print(f"Processed successfully: [bold]{success_count}[/bold]")
@@ -220,7 +279,7 @@ def _process_pdfs(
     model: str,
     chunk_model: str,
     resolved_prompt: str,
-    ollama_client: OllamaClient | None,
+    model_client: LiteModelClient | None,
 ) -> tuple[int, list[tuple[Path, str]], list[FileProcessingMetrics]]:
     failures: list[tuple[Path, str]] = []
     success_count = 0
@@ -310,13 +369,13 @@ def _process_pdfs(
                     f"[blue]Chunk plan:[/blue] size={metrics.chunk_size} chars | chunks={metrics.chunk_count} | parallelism={parallelism} | chunk_model={chunk_model}"
                 )
 
-            assert ollama_client is not None
+            assert model_client is not None
             extract_started = perf_counter()
-            chunk_outputs = ollama_client.extract_chunks_parallel(chunks, resolved_prompt, parallelism, model=chunk_model)
+            chunk_outputs = model_client.extract_chunks_parallel(chunks, resolved_prompt, parallelism, model=chunk_model)
             metrics.extract_seconds = perf_counter() - extract_started
 
             merge_started = perf_counter()
-            output_body = ollama_client.merge_chunk_evidence(chunk_outputs, resolved_prompt, model=model)
+            output_body = model_client.merge_chunk_evidence(chunk_outputs, resolved_prompt, model=model)
             metrics.merge_seconds = perf_counter() - merge_started
             if include_chunk_details:
                 chunk_details = format_chunked_output(chunk_outputs)
@@ -341,7 +400,7 @@ def _process_pdfs(
             if verbose:
                 _print_file_timing(metrics)
             success_count += 1
-        except (ConversionError, OllamaError, OSError) as exc:
+        except (ConversionError, ModelProviderError, OSError) as exc:
             metrics.total_seconds = amortized_convert_seconds + (perf_counter() - started)
             metrics_list.append(metrics)
             failures.append((pdf_path, str(exc)))

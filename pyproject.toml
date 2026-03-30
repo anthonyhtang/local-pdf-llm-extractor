@@ -1,7 +1,7 @@
 [project]
-name = "local-pdf-llm-extractor"
+name = "semantic-pdf-retriever"
 version = "0.1.0"
-description = "Cross-platform local PDF extraction CLI with Markdown conversion and Ollama-based LLM extraction"
+description = "Cross-platform PDF extraction CLI with Markdown conversion and lite-model retrieval (local/OpenRouter)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

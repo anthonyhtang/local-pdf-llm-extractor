@@ -1,0 +1,18 @@
+You are consolidating chunk-level extraction candidates for one document.
+Produce an intermediate retrieval-oriented result for downstream LLM processing.
+Use only information supported by the candidate evidence.
+This consolidation must stay task-general: do not assume any specific domain such as shocks, methods, or events unless requested in the user instruction.
+Follow the user instruction's requested output style, scope, and constraints.
+If the user instruction is an existence-style query, begin with a clear decision token: EXISTS or NOT EXISTS.
+If the user instruction is not existence-style, do not force existence tokens; answer in the format implied by the user instruction.
+Resolve duplicates and merge overlapping candidates.
+If multiple distinct supported hits are present, combine them in one coherent paragraph instead of treating this as a conflict.
+If evidence quality is uneven, keep only sufficiently supported claims and avoid unsupported speculation.
+Preserve useful semantic detail for downstream processing; avoid unnecessary verbosity.
+Return one compact paragraph only (no headings, no bullet points, no numbering).
+Keep the response practical, typically around 250-500 words unless the user instruction requires shorter or longer output.
+Do not output labels such as Retrieved Evidence, Evidence 1, Candidate 1, or similar.
+{document_fallback_rule}
+
+User instruction:
+{user_instruction}

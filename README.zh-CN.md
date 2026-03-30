@@ -1,18 +1,18 @@
-# Local PDF LLM Extractor 中文说明
+# Semantic PDF Retriever 中文说明
 
 English version: [README.md](README.md)
 
 ```text
- /\_/\\   Local PDF LLM Extractor
-( o.o )  本地解析 PDF，本地语义提取
+ /\_/\\   Semantic PDF Retriever
+( o.o )  解析 PDF，语义检索与抽取
  > ^ <   chunk, ask, merge
 ```
 
-Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在本地从 PDF 中抽取信息，并结合本地大语言模型进行语义问答与信息提取。
+Semantic PDF Retriever 是一个跨平台的 Python 命令行工具，用来从 PDF 中抽取信息，并通过可配置的 lite model 进行语义问答与信息提取。
 
 ## 为什么会有这个项目
 
-这个项目不是为了在本地写“漂亮摘要”，而是为了解决大量 PDF 的语义检索与证据抽取问题。
+这个项目不是为了写“漂亮摘要”，而是为了解决大量 PDF 的语义检索与证据抽取问题。
 
 核心目标是高召回筛查：根据用户给定的信息需求，快速定位相关文档与证据片段，并输出结构化结果，供后续分析使用。
 
@@ -22,15 +22,16 @@ Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在
 
 - RAG 在大规模文档检索上很有价值，但在细粒度语义任务（方法识别、因果主张、识别策略）上，检索精度通常还不够稳定。
 
-为什么不直接把全量文档交给昂贵云端大模型：
+为什么不直接把全量文档交给云端大模型：
 
 - 成本会随着文档规模和重复查询快速上升。
+- 在大规模筛查场景下，成本是乘法放大的：总开销大致随 PDF 数量 × 查询轮次 × 每轮平均 token 量增长，很快就会变得不可持续。
 - 上下文窗口仍然难以承载大规模、多文档端到端筛查。
 
 这个项目的做法：
 
-- 用本地解析 + 本地 LLM 抽取作为可控中间层。
-- 优先保证语义筛查与证据抽取，而不是本地叙事摘要。
+- 用稳定解析 + lite model 抽取作为可控中间层。
+- 优先保证语义筛查与证据抽取，而不是叙事摘要。
 - 产出中间证据结果，后续再交给更强、更昂贵的模型做深度推理或写作。
 
 输出意图：
@@ -38,34 +39,34 @@ Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在
 - 文档级结果会刻意保持简洁、偏检索导向。
 - 它是给下游大模型继续处理的筛查中间结果，不是最终面向读者的叙事摘要。
 
-简而言之，本地模型在这里负责“找证据”，不是“写终稿”。
+简而言之，模型层在这里负责“找证据”，不是“写终稿”。
 
 ## 问题场景
 
 很多研究问题并不是简单的关键词搜索，而是语义层面的提问，例如：
 
-- 这篇论文使用了什么统计工具？
-- 这项研究是否使用了自然实验？
-- 作者声称的识别策略是什么？
+- 在上百篇论文的目录里，哪些 PDF 使用了事件研究（event-study）规格？
+- 在大规模报告集合里，哪些文档明确依赖自然实验？
+- 在一轮批量筛查里，哪些文件明确描述了识别策略假设？
 
-如果只是单篇 PDF，直接交给商用大模型处理通常没有问题。
+如果只是小规模、一次性的单文档检查，直接交给商用大模型通常也可行。
 
-真正的瓶颈出现在“大量 PDF 的检索任务”上：需要反复查询、反复装载上下文、跨文档筛查，成本会快速上升，工程上也很难扩展。
+真正的瓶颈出现在“大量 PDF 的批量筛查任务”上：需要反复查询、反复装载上下文、跨文档筛查，成本会快速上升，工程上也很难扩展。
 
-这个项目的目标是把流程本地化、工程化：先在本地把 PDF 解析成结构化文本，再按稳定 chunk 方式送给本地 LLM 做语义抽取，避免每次都把整篇原始文档塞进远程上下文。
+这个项目的目标是把流程工程化：先把 PDF 解析成结构化文本，再按稳定 chunk 方式送给可配置 lite model 做语义抽取，避免每次都把整篇原始文档塞进昂贵远程上下文。
 
 整个流程大致分成三步：
 
 1. 把 PDF 解析成 Markdown 或规范化文本。
 2. 把文本切分成适合 LLM 处理的块。
-3. 通过本地 Ollama 模型完成 chunk 级抽取与证据合并。
+3. 通过 lite model 完成 chunk 级抽取与证据合并（可选本地 provider 或 OpenRouter）。
 
-这个项目适合想要在本地完成研究论文、报告、内部文档分析的人，尤其适合希望避免云端上传、减少 token 消耗、并保留可重复工作流的场景。
+这个项目适合做研究论文、报告、内部文档分析的人，尤其适合希望控制成本、减少 token 消耗、并保留可重复工作流的场景。
 
 ## 项目功能
 
 - 支持将 PDF 转成 Markdown 或规范化纯文本。
-- 支持通过本地 Ollama 模型进行语义提问与信息抽取。
+- 支持通过 lite model 进行语义提问与信息抽取（本地 provider + OpenRouter 低成本模型）。
 - 同时支持高保真解析路径和更快的文本优先解析路径。
 - 支持 Windows、Linux，以及 WSL 风格路径。
 - 支持目录批处理。
@@ -80,7 +81,7 @@ Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在
 - `pymupdf` 引擎：更轻量的 Markdown 路径。
 - 多文件批量转换。
 - 自适应 chunk 大小。
-- 并发发送 chunk 到 Ollama。
+- 并发发送 chunk 到所选模型 provider。
 - 两阶段抽取：先抽 chunk 候选，再进行证据去重与合并。
 - 详细 verbose 计时输出。
 
@@ -96,7 +97,7 @@ Local PDF LLM Extractor 是一个跨平台的 Python 命令行工具，用来在
 
 - `src/pdf_extractor/cli.py`：Typer 命令行入口与流程编排。
 - `src/pdf_extractor/converter.py`：PDF 解析引擎与批量转换逻辑。
-- `src/pdf_extractor/extractor.py`：Ollama 客户端、chunk 抽取与证据合并。
+- `src/pdf_extractor/extractor.py`：provider 客户端、chunk 抽取与证据合并。
 - `src/pdf_extractor/utils.py`：切块、文件工具、文本规范化与输出辅助函数。
 
 高层流程：
@@ -106,7 +107,7 @@ PDF
   -> 使用 fast / fast-first / mineru / pymupdf 解析
   -> 生成纯文本或 Markdown
   -> 切分为多个 chunk
-  -> 将 chunk 发送给 Ollama
+  -> 将 chunk 发送给所选 lite model provider
   -> 合并为证据结果
   -> 写出 Markdown 文件
 ```
@@ -122,15 +123,25 @@ Chunk 级检索：
 
 文档级 consolidation：
 
-- 只要有一个或多个 chunk 命中，且多个 chunk 共同指向同一事件或对象，则判定为 EXISTS。
-- 如果没有任何 chunk 命中，则判定为 NOT EXISTS。
-- 如果 chunk 之间冲突明显且无法收敛，则判定为 UNCLEAR。
+- consolidation 是任务无关的，会跟随用户 query 的目标与格式。
+- 对“是否存在”这类 query，输出 EXISTS 或 NOT EXISTS；只要有足够支持的命中即判定 EXISTS。
+- 对非存在性 query，不会强行输出 EXISTS 标签，而是按用户要求的格式组织结果。
+- 如果存在多个不同但都被支持的命中，会合并在同一结果里输出，而不是因为多目标而判定不明确。
 
 输出意图：
 
 - 只输出一个紧凑段落，便于下游处理。
 - 保持简洁、检索导向。
 - 这是给更强下游大模型使用的中间结果，不是最终叙事报告。
+
+## Prompt 模板（核心可调点）
+
+chunk 与 consolidation 的提示词已经放在文件中维护，不再硬编码在 Python 逻辑里：
+
+- `prompts/chunk_prompt.txt`：控制 chunk 级检索行为。
+- `prompts/consolidation_prompt.txt`：控制文档级 consolidation 行为。
+
+这些模板是质量和风格调优的核心入口。你可以在不改应用代码的情况下，直接调节严格度、细节密度、输出格式约束和判定策略。
 
 ## 依赖与致谢
 
@@ -141,9 +152,10 @@ Chunk 级检索：
 - `MinerU`：高保真 PDF 解析与版面重建。
 - `PyMuPDF` 与 `pymupdf4llm`：直接文本提取与轻量 Markdown 转换。
 - `Ollama`：本地大模型服务。
+- `OpenRouter`：在线 low-cost/free lite models。
 - `PyTorch` 与 `torchvision`：MinerU 所依赖的 GPU 运行时支持。
 - `Typer`：命令行框架。
-- `httpx`：本地 Ollama HTTP 通信。
+- `httpx`：模型 provider HTTP 通信。
 - `rich`：终端格式化与计时表格。
 
 这些能力的核心 credit 应归属于各上游项目的维护者，本项目主要提供的是本地 PDF 语义抽取工作流的编排与整合。
@@ -152,8 +164,9 @@ Chunk 级检索：
 
 - Python 3.11 或以上。
 - `uv`，用于环境与依赖管理。
-- 一个正在运行的 Ollama 实例，默认地址是 `http://localhost:11434`。
-- 至少一个已经安装好的 Ollama 文本生成模型。
+- 至少配置一个模型 provider：
+  - 本地 provider（Ollama 兼容接口，默认 `http://localhost:11434`），或
+  - OpenRouter API key（从环境变量读取）。
 
 可选但推荐：
 
@@ -195,7 +208,11 @@ Windows PowerShell 下常见激活方式：
 .venv\Scripts\Activate.ps1
 ```
 
-## Ollama 设置
+## Lite Model Provider 设置
+
+你可以二选一：`--provider local` 或 `--provider openrouter`。
+
+### 本地 Provider（Ollama 兼容）
 
 先在本地启动 Ollama，并确保拉取了要使用的模型。
 
@@ -208,7 +225,28 @@ ollama pull qwen3.5:9b
 ollama pull gemma3:4b
 ```
 
-CLI 默认的抽取模型是 `qwen3.5:9b`。
+### OpenRouter Provider
+
+把 key 放在环境变量中（默认变量名 `OPENROUTER_API_KEY_Test`）：
+
+```powershell
+$env:OPENROUTER_API_KEY_Test = "<your-key>"
+```
+
+Windows 持久化（用户级）环境变量：
+
+```powershell
+setx OPENROUTER_API_KEY_Test "<your-key>"
+```
+
+可用的 free model 预设：
+
+- `minimax/minimax-m2.5:free`
+- `openai/gpt-oss-120b:free`
+- `google/gemini-2.5-flash-lite`
+- `z-ai/glm-4.5-air:free`
+
+local 模式下 CLI 默认抽取模型仍是 `qwen3.5:9b`。
 
 推荐的本地模型组合：
 
@@ -219,7 +257,7 @@ CLI 默认的抽取模型是 `qwen3.5:9b`。
 
 ### 1. 先做一次单文件 dry-run
 
-这一步只做 PDF 转换，不调用 Ollama。
+这一步只做 PDF 转换，不调用任何模型 API。
 
 ```bash
 uv run pdf-extract --input path/to/file.pdf --dry-run
@@ -232,6 +270,16 @@ uv run pdf-extract \
   --input path/to/file.pdf \
   --prompt "提取与外生冲击相关的证据，包括时间、地点和受影响对象" \
   --model qwen3.5:9b
+```
+
+使用 OpenRouter free model：
+
+```bash
+uv run pdf-extract \
+  --input path/to/file.pdf \
+  --provider openrouter \
+  --model minimax/minimax-m2.5:free \
+  --prompt "提取与外生冲击相关的证据，包括时间、地点和受影响对象"
 ```
 
 官方结构化 prompt 模板：
@@ -401,11 +449,16 @@ pdf-extract \
   --output-dir PATH \
   --engine [mineru|pymupdf|fast|fast-first] \
   --fast-fallback \
-  --ollama-url TEXT \
+  --provider [local|openrouter] \
+  --local-url TEXT \
+  --openrouter-url TEXT \
+  --openrouter-api-key-env TEXT \
   --model TEXT \
   --chunk-model TEXT \
   --chunk-size INT \
   --parallelism INT \
+  --min-request-interval FLOAT \
+  --max-retries INT \
   --batch-convert / --no-batch-convert \
   --include-chunk-details \
   --verbose \
@@ -419,20 +472,37 @@ pdf-extract \
 - `--prompt-file`：从文件中读取抽取指令。
 - `--output-dir`：输出到指定目录，而不是写回输入 PDF 所在目录。
 - `--engine`：选择 PDF 解析策略。
+- `--provider`：`local`（默认）或 `openrouter`。
+- `--local-url`：本地 provider 地址（Ollama 兼容）。
+- `--openrouter-api-key-env`：OpenRouter API key 的环境变量名（默认 `OPENROUTER_API_KEY_Test`）。
 - `--model`：默认的 chunk 抽取模型。
 - `--chunk-model`：可选的 chunk 抽取覆盖模型。
-- `--parallelism`：并发发送到 Ollama 的 chunk 数量。
+- `--parallelism`：并发发送的 chunk 数量，默认 `2`。
+- `--min-request-interval`：请求之间最小间隔，OpenRouter 默认 `1.0s`。
+- `--max-retries`：超时/429/5xx 重试次数。
 - `--verbose`：打印启动、规划与计时细节。
-- `--dry-run`：跳过 Ollama，只写中间转换结果。
+- `--dry-run`：跳过模型调用，只写中间转换结果。
+
+## 远程 API 限流默认策略
+
+当使用 `--provider openrouter` 时，CLI 默认采用保守策略，降低封禁/限流风险：
+
+- 并发上限自动限制为 `2`。
+- 请求最小间隔默认 `1.0` 秒。
+- 对 `429`、`408`、`5xx` 自动指数退避重试，并加随机抖动。
+- 如果服务端返回 `Retry-After`，会优先按该等待时间重试。
+- 如果 OpenRouter 的 `/models` 启动探测出现瞬时失败，CLI 会告警后继续执行运行期请求。
+
+这些默认值是为了长时间批跑的稳定性。
 
 ## 引擎比较
 
-| 引擎 | 作用 | 优点 | 缺点 | 建议使用场景 |
-| --- | --- | --- | --- | --- |
-| `fast` | 直接读取 PDF 文本层 | 对于文本型 PDF 速度最快 | 无法处理纯图像 PDF，也不重建复杂版面 | 明确知道 PDF 有可用文本层时使用 |
-| `fast-first` | 先尝试 `fast`，失败后自动回退 | 兼顾易用性与速度 | 回退后速度会下降 | 文档质量未知时的推荐默认选项 |
-| `mineru` | 更高保真的 PDF 重建 | 版面、表格、公式恢复更好，可利用 GPU | 运行更重，依赖也更复杂 | 输出质量优先时使用 |
-| `pymupdf` | 轻量 Markdown 转换路径 | 更简单、更轻量 | 对复杂版面的恢复较弱 | 无法使用 MinerU 或不想使用时 |
+| 引擎           | 作用                            | 优点                                 | 缺点                                 | 建议使用场景                    |
+| -------------- | ------------------------------- | ------------------------------------ | ------------------------------------ | ------------------------------- |
+| `fast`       | 直接读取 PDF 文本层             | 对于文本型 PDF 速度最快              | 无法处理纯图像 PDF，也不重建复杂版面 | 明确知道 PDF 有可用文本层时使用 |
+| `fast-first` | 先尝试 `fast`，失败后自动回退 | 兼顾易用性与速度                     | 回退后速度会下降                     | 文档质量未知时的推荐默认选项    |
+| `mineru`     | 更高保真的 PDF 重建             | 版面、表格、公式恢复更好，可利用 GPU | 运行更重，依赖也更复杂               | 输出质量优先时使用              |
+| `pymupdf`    | 轻量 Markdown 转换路径          | 更简单、更轻量                       | 对复杂版面的恢复较弱                 | 无法使用 MinerU 或不想使用时    |
 
 ## 输出文件
 
@@ -460,7 +530,7 @@ pdf-extract \
 ## 性能说明
 
 - 对于带有文本层的 PDF，`fast` 和 `fast-first` 通常是最快的。
-- 当 PDF 解析足够快之后，主要瓶颈通常会转移到 Ollama 推理。
+- 当 PDF 解析足够快之后，主要瓶颈通常会转移到模型推理。
 - chunk 模型选择会显著影响本地检索吞吐与召回质量。
 - 批量转换在多个 PDF 使用 `mineru` 时更有价值，因为它可以摊薄初始化开销。
 
@@ -505,8 +575,8 @@ pdf-extract \
 
 1. `uv sync` 可以成功完成。
 2. `uv run pdf-extract --help` 可以显示 CLI 帮助。
-3. `uv run pdf-extract --input path/to/file.pdf --dry-run` 可以在不调用 Ollama 的情况下写出转换结果。
-4. `uv run pdf-extract --input path/to/file.pdf --prompt "..."` 可以调用 Ollama 并写出抽取结果。
+3. `uv run pdf-extract --input path/to/file.pdf --dry-run` 可以在不调用任何 provider 的情况下写出转换结果。
+4. `uv run pdf-extract --input path/to/file.pdf --prompt "..."` 可以调用所选 provider 并写出抽取结果。
 5. `uv run pdf-extract --input path/to/folder --batch-convert --dry-run` 可以成功处理多个 PDF。
 
 ## 许可证与上游说明

@@ -1,0 +1,12 @@
+You are reviewing one chunk from a larger document.
+Answer only with information supported by this chunk.
+If the chunk does not contain material relevant to the user instruction, reply exactly {not_relevant_sentinel}.
+Otherwise return only evidence grounded in this chunk.
+Prefer a short bullet list with direct facts, entities, dates, and numbers from the chunk.
+Do not summarize the whole document.
+This is a chunk-level task, not a whole-document task.
+Do not repeat the user instruction. Do not add caveats unless the chunk itself requires them.
+{document_fallback_rules}
+
+User instruction:
+{user_instruction}
